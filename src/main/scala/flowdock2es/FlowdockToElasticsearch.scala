@@ -153,8 +153,8 @@ object FlowdockToElasticsearch extends App {
             esclient.execute {
               index into config.getString("elasticsearch.index.data") -> "thread" fields (
                 "flow" -> flowName,
-                "thread_id" -> allTags.find(_ == ":thread").map(_ => id.toString).getOrElse(""),
-                "thread_title" -> allTags.find(_ == ":thread").map(_ => text).getOrElse(""),
+                "thread" -> allTags.find(_ == ":thread").map(_ => id.toString).getOrElse(null),
+                "title" -> allTags.find(_ == ":thread").map(_ => text).getOrElse(null),
                 "author" -> user.map(_._2).getOrElse(userid),
                 "@timestamp" -> date,
                 "tags" -> allTags.filterNot(_.startsWith(":")).filterNot(_.startsWith("influx:")),
@@ -177,8 +177,8 @@ object FlowdockToElasticsearch extends App {
             esclient.execute {
               index into config.getString("elasticsearch.index.data") -> "comment" fields (
                 "flow" -> flowName,
-                "thread_id" -> allTags.find(_.startsWith("influx:")).map(_.split(":", 2).apply(1)).getOrElse(""),
-                "thread_title" -> title,
+                "thread" -> allTags.find(_.startsWith("influx:")).map(_.split(":", 2).apply(1)).getOrElse(null),
+                "title" -> title,
                 "author" -> user.map(_._2).getOrElse(userid),
                 "@timestamp" -> date,
                 "tags" -> allTags.filterNot(_.startsWith(":")).filterNot(_.startsWith("influx:")),
@@ -213,10 +213,38 @@ object FlowdockToElasticsearch extends App {
               index into config.getString("elasticsearch.index.data") -> "mail" fields (
                 "flow" -> flowName,
                 "@timestamp" -> date,
-                "subject" -> subject,
+                "title" -> subject,
                 "text" -> text,
                 "author" -> fromName,
                 "from" -> fromAddress,
+                "tags" -> allTags.filterNot(_.startsWith(":")) //
+                ) id s"$flowid-$id"
+            }
+            importedMessages += 1
+          }
+
+        // A JIRA issue notification
+        case "jira" =>
+          for {
+            JField("project_name", JString(project)) <- content
+            JField("user_name", JString(userName)) <- content
+            JField("issue_summary", JString(summary)) <- content
+            JField("issue_description", JString(text)) <- content
+            JField("issue_key", JString(issue)) <- content
+            JField("issue_type", JString(issueType)) <- content
+            JField("event_type", JString(jiraEvent)) <- content
+          } yield {
+
+            esclient.execute {
+              index into config.getString("elasticsearch.index.data") -> "jira" fields (
+                "flow" -> flowName,
+                "@timestamp" -> date,
+                "title" -> summary,
+                "text" -> text,
+                "author" -> userName,
+                "project" -> project,
+                "issue_key" -> issue,
+                "jira_event" -> jiraEvent,
                 "tags" -> allTags.filterNot(_.startsWith(":")) //
                 ) id s"$flowid-$id"
             }
@@ -273,8 +301,8 @@ object FlowdockToElasticsearch extends App {
         create index (config.getString("elasticsearch.index.data")) mappings (
           "thread" as (
             ("flow" typed (StringType) index ("not_analyzed")),
-            ("thread_id" typed (StringType) index ("not_analyzed")),
-            ("thread_title" typed (StringType) index ("not_analyzed")),
+            ("thread" typed (StringType) index ("not_analyzed")),
+            ("title" typed (StringType) index ("not_analyzed") copyTo ("text")),
             ("author" typed (StringType) index ("not_analyzed")),
             ("highlighted_users" typed (StringType) index ("not_analyzed")),
             ("tags" typed (StringType) index ("not_analyzed")),
@@ -286,8 +314,8 @@ object FlowdockToElasticsearch extends App {
             ) all (false) source (true) size (true),
             "comment" as (
               ("flow" typed (StringType) index ("not_analyzed")),
-              ("thread_id" typed (StringType) index ("not_analyzed")),
-              ("thread_title" typed (StringType) index ("not_analyzed")),
+              ("thread" typed (StringType) index ("not_analyzed")),
+              ("title" typed (StringType) index ("not_analyzed") copyTo ("text")),
               ("author" typed (StringType) index ("not_analyzed")),
               ("highlighted_users" typed (StringType) index ("not_analyzed")),
               ("tags" typed (StringType) index ("not_analyzed")),
@@ -299,14 +327,25 @@ object FlowdockToElasticsearch extends App {
               ) all (false) source (true) size (true),
               "mail" as (
                 ("flow" typed (StringType) index ("not_analyzed")),
-                ("subject" typed (StringType) analyzer (StandardAnalyzer)),
+                ("title" typed (StringType) index ("not_analyzed") copyTo ("text")),
                 ("text" typed (StringType) analyzer (StandardAnalyzer)),
                 ("author" typed (StringType) index ("not_analyzed")),
                 ("from" typed (StringType) index ("not_analyzed")),
                 ("tags" typed (StringType) index ("not_analyzed")),
                 ("@timestamp" typed (DateType)) //
-                ) all (false) source (true) size (true) //
-                ) shards (1) replicas (0)
+                ) all (false) source (true) size (true),
+                "jira" as (
+                  ("flow" typed (StringType) index ("not_analyzed")),
+                  ("title" typed (StringType) index ("not_analyzed") copyTo ("text")),
+                  ("text" typed (StringType) analyzer (StandardAnalyzer)),
+                  ("author" typed (StringType) index ("not_analyzed")),
+                  ("project" typed (StringType) index ("not_analyzed")),
+                  ("issue_key" typed (StringType) index ("not_analyzed")),
+                  ("jira_event" typed (StringType) index ("not_analyzed")),
+                  ("tags" typed (StringType) index ("not_analyzed")),
+                  ("@timestamp" typed (DateType)) //
+                  ) all (false) source (true) size (true) //
+                  ) shards (1) replicas (0)
       }
     }
   }
